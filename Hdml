@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Super Mini Soccer</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at top, #1b2735 0, #090a0f 55%);
+      color: #f5f5f5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+      letter-spacing: 1px;
+    }
+
+    .subtitle {
+      margin-bottom: 16px;
+      opacity: 0.8;
+      font-size: 0.95rem;
+    }
+
+    .game-wrapper {
+      position: relative;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.1);
+    }
+
+    canvas {
+      display: block;
+      background: #0b5f2a;
+    }
+
+    .hud {
+      margin-top: 12px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      font-size: 0.95rem;
+    }
+
+    .badge {
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .controls {
+      margin-top: 8px;
+      font-size: 0.85rem;
+      opacity: 0.8;
+      text-align: center;
+    }
+
+    .btn {
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      background: linear-gradient(135deg, #ffb347, #ff6b6b);
+      color: #111;
+      font-weight: 600;
+      font-size: 0.9rem;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.5);
+      transition: transform 0.1s ease, box-shadow 0.1s ease, filter 0.1s ease;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.6);
+      filter: brightness(1.05);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+      filter: brightness(0.95);
+    }
+
+    .message {
+      margin-top: 10px;
+      min-height: 20px;
+      font-size: 0.9rem;
+      text-align: center;
+      opacity: 0.9;
+    }
+  </style>
+</head>
+<body>
+  <h1>Super Mini Soccer</h1>
+  <div class="subtitle">Score as many goals as you can before the timer runs out.</div>
+
+  <div class="game-wrapper">
+    <canvas id="game" width="800" height="450"></canvas>
+  </div>
+
+  <div class="hud">
+    <div class="badge">Score: <span id="score">0</span></div>
+    <div class="badge">Time: <span id="time">60</span>s</div>
+    <div class="badge">Difficulty: <span id="difficultyLabel">Normal</span></div>
+    <button class="btn" id="restartBtn">Restart</button>
+  </div>
+
+  <div class="controls">
+    Move with <strong>WASD</strong> or <strong>Arrow keys</strong> • Sprint with <strong>Shift</strong> • Nudge ball with your body
+  </div>
+  <div class="message" id="message"></div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+
+    const scoreEl = document.getElementById("score");
+    const timeEl = document.getElementById("time");
+    const messageEl = document.getElementById("message");
+    const restartBtn = document.getElementById("restartBtn");
+    const difficultyLabel = document.getElementById("difficultyLabel");
+
+    const FIELD = {
+      width: canvas.width,
+      height: canvas.height,
+      lineColor: "rgba(255,255,255,0.7)",
+      centerCircleRadius: 60,
+      goalWidth: 140,
+      goalDepth: 12
+    };
+
+    const PLAYER = {
+      radius: 16,
+      baseSpeed: 3.0,
+      sprintMultiplier: 1.6,
+      friction: 0.9,
+      color: "#f5f5f5",
+      outline: "#111"
+    };
+
+    const BALL = {
+      radius: 10,
+      color: "#f9e45b",
+      outline: "#111",
+      friction: 0.985,
+      kickPower: 4.2,
+      maxSpeed: 9
+    };
+
+    const AI = {
+      radius: 16,
+      color: "#ff4f4f",
+      outline: "#111",
+      speed: 2.4,
+      markDistance: 80,
+      tackleDistance: 40,
+      difficulty: "Normal"
+    };
+
+    const GAME = {
+      score: 0,
+      timeLeft: 60,
+      running: true,
+      lastTime: 0
+    };
+
+    const keys = {};
+    window.addEventListener("keydown", (e) => {
+      keys[e.key.toLowerCase()] = true;
+    });
+    window.addEventListener("keyup", (e) => {
+      keys[e.key.toLowerCase()] = false;
+    });
+
+    const player = {
+      x: FIELD.width * 0.25,
+      y: FIELD.height / 2,
+      vx: 0,
+      vy: 0
+    };
+
+    const ai = {
+      x: FIELD.width * 0.75,
+      y: FIELD.height / 2,
+      vx: 0,
+      vy: 0
+    };
+
+    const ball = {
+      x: FIELD.width / 2,
+      y: FIELD.height / 2,
+      vx: 0,
+      vy: 0
+    };
+
+    function resetPositions(kickoffToPlayer = true) {
+      player.x = FIELD.width * 0.25;
+      player.y = FIELD.height / 2;
+      player.vx = player.vy = 0;
+
+      ai.x = FIELD.width * 0.75;
+      ai.y = FIELD.height / 2;
+      ai.vx = ai.vy = 0;
+
+      ball.x = FIELD.width / 2;
+      ball.y = FIELD.height / 2;
+      ball.vx = ball.vy = 0;
+
+      if (!kickoffToPlayer) {
+        ball.x = FIELD.width * 0.75;
+      }
+    }
+
+    function setDifficulty(level) {
+      if (level === "Easy") {
+        AI.speed = 2.0;
+        AI.markDistance = 70;
+        AI.tackleDistance = 35;
+      } else if (level === "Normal") {
+        AI.speed = 2.6;
+        AI.markDistance = 90;
+        AI.tackleDistance = 45;
+      } else if (level === "Hard") {
+        AI.speed = 3.2;
+        AI.markDistance = 110;
+        AI.tackleDistance = 55;
+      }
+      AI.difficulty = level;
+      difficultyLabel.textContent = level;
+    }
+
+    setDifficulty("Normal");
+
+    function updatePlayer() {
+      let inputX = 0;
+      let inputY = 0;
+
+      if (keys["arrowup"] || keys["w"]) inputY -= 1;
+      if (keys["arrowdown"] || keys["s"]) inputY += 1;
+      if (keys["arrowleft"] || keys["a"]) inputX -= 1;
+      if (keys["arrowright"] || keys["d"]) inputX += 1;
+
+      const sprinting = keys["shift"];
+
+      let speed = PLAYER.baseSpeed * (sprinting ? PLAYER.sprintMultiplier : 1);
+
+      if (inputX !== 0 || inputY !== 0) {
+        const len = Math.hypot(inputX, inputY) || 1;
+        inputX /= len;
+        inputY /= len;
+
+        player.vx += inputX * 0.6 * speed;
+        player.vy += inputY * 0.6 * speed;
+      }
+
+      player.vx *= PLAYER.friction;
+      player.vy *= PLAYER.friction;
+
+      player.x += player.vx;
+      player.y += player.vy;
+
+      player.x = Math.max(PLAYER.radius, Math.min(FIELD.width - PLAYER.radius, player.x));
+      player.y = Math.max(PLAYER.radius, Math.min(FIELD.height - PLAYER.radius, player.y));
+    }
+
+    function updateAI() {
+      const dx = ball.x - ai.x;
+      const dy = ball.y - ai.y;
+      const dist = Math.hypot(dx, dy) || 1;
+
+      let targetX = ball.x;
+      let targetY = ball.y;
+
+      const goalX = FIELD.width - FIELD.goalDepth - 40;
+      const toGoalX = goalX - ball.x;
+      const toGoalY = FIELD.height / 2 - ball.y;
+      const toGoalDist = Math.hypot(toGoalX, toGoalY) || 1;
+
+      if (dist < AI.markDistance) {
+        targetX = ball.x - (toGoalX / toGoalDist) * 40;
+        targetY = ball.y - (toGoalY / toGoalDist) * 40;
+      }
+
+      const dirX = targetX - ai.x;
+      const dirY = targetY - ai.y;
+      const len = Math.hypot(dirX, dirY) || 1;
+
+      const speed = AI.speed;
+      ai.vx = (dirX / len) * speed;
+      ai.vy = (dirY / len) * speed;
+
+      ai.x += ai.vx;
+      ai.y += ai.vy;
+
+      ai.x = Math.max(AI.radius, Math.min(FIELD.width - AI.radius, ai.x));
+      ai.y = Math.max(AI.radius, Math.min(FIELD.height - AI.radius, ai.y));
+
+      const tackleDx = ball.x - ai.x;
+      const tackleDy = ball.y - ai.y;
+      const tackleDist = Math.hypot(tackleDx, tackleDy);
+
+      if (tackleDist < AI.tackleDistance) {
+        const normX = tackleDx / (tackleDist || 1);
+        const normY = tackleDy / (tackleDist || 1);
+        const power = 3.5;
+        ball.vx += normX * power;
+        ball.vy += normY * power;
+      }
+    }
+
+    function updateBall() {
+      ball.x += ball.vx;
+      ball.y += ball.vy;
+
+      ball.vx *= BALL.friction;
+      ball.vy *= BALL.friction;
+
+      const speed = Math.hypot(ball.vx, ball.vy);
+      if (speed > BALL.maxSpeed) {
+        ball.vx = (ball.vx / speed) * BALL.maxSpeed;
+        ball.vy = (ball.vy / speed) * BALL.maxSpeed;
+      }
+
+      if (ball.x < BALL.radius) {
+        ball.x = BALL.radius;
+        ball.vx *= -0.6;
+      }
+      if (ball.x > FIELD.width - BALL.radius) {
+        ball.x = FIELD.width - BALL.radius;
+        ball.vx *= -0.6;
+      }
+      if (ball.y < BALL.radius) {
+        ball.y = BALL.radius;
+        ball.vy *= -0.6;
+      }
+      if (ball.y > FIELD.height - BALL.radius) {
+        ball.y = FIELD.height - BALL.radius;
+        ball.vy *= -0.6;
+      }
+
+      handlePlayerBallCollision(player, PLAYER.radius);
+      handlePlayerBallCollision(ai, AI.radius);
+
+      checkGoals();
+    }
+
+    function handlePlayerBallCollision(p, radius) {
+      const dx = ball.x - p.x;
+      const dy = ball.y - p.y;
+      const dist = Math.hypot(dx, dy);
+
+      const minDist = BALL.radius + radius;
+      if (dist < minDist && dist > 0) {
+        const overlap = minDist - dist;
+        const nx = dx / dist;
+        const ny = dy / dist;
+
+        ball.x += nx * overlap;
+        ball.y += ny * overlap;
+
+        const relativeVx = ball.vx - p.vx;
+        const relativeVy = ball.vy - p.vy;
+        const relDot = relativeVx * nx + relativeVy * ny;
+
+        if (relDot < 0) {
+          const impulse = -1.4 * relDot;
+          ball.vx += impulse * nx;
+          ball.vy += impulse * ny;
+        }
+
+        const kickStrength = BALL.kickPower;
+        ball.vx += nx * kickStrength;
+        ball.vy += ny * kickStrength;
+      }
+    }
+
+    function checkGoals() {
+      const inGoalY =
+        ball.y > FIELD.height / 2 - FIELD.goalWidth / 2 &&
+        ball.y < FIELD.height / 2 + FIELD.goalWidth / 2;
+
+      if (inGoalY && ball.x < BALL.radius + FIELD.goalDepth) {
+        GAME.score += 1;
+        scoreEl.textContent = GAME.score;
+        flashMessage("GOAL! +1", "#7CFC00");
+        resetPositions(false);
+      }
+
+      if (inGoalY && ball.x > FIELD.width - BALL.radius - FIELD.goalDepth) {
+        GAME.score = Math.max(0, GAME.score - 1);
+        scoreEl.textContent = GAME.score;
+        flashMessage("Own goal! -1", "#ff6b6b");
+        resetPositions(true);
+      }
+    }
+
+    let messageTimeout = null;
+    function flashMessage(text, color = "#fff") {
+      messageEl.textContent = text;
+      messageEl.style.color = color;
+      if (messageTimeout) clearTimeout(messageTimeout);
+      messageTimeout = setTimeout(() => {
+        messageEl.textContent = "";
+      }, 1500);
+    }
+
+    function updateTimer(delta) {
+      if (!GAME.running) return;
+      GAME.timeLeft -= delta / 1000;
+      if (GAME.timeLeft <= 0) {
+        GAME.timeLeft = 0;
+        GAME.running = false;
+        flashMessage("Full time! Final score: " + GAME.score, "#ffd166");
+      }
+      timeEl.textContent = GAME.timeLeft.toFixed(0);
+    }
+
+    function drawField() {
+      ctx.clearRect(0, 0, FIELD.width, FIELD.height);
+
+      const grad = ctx.createLinearGradient(0, 0, 0, FIELD.height);
+      grad.addColorStop(0, "#0b5f2a");
+      grad.addColorStop(1, "#06401b");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, FIELD.width, FIELD.height);
+
+      ctx.strokeStyle = FIELD.lineColor;
+      ctx.lineWidth = 3;
+
+      ctx.strokeRect(30, 30, FIELD.width - 60, FIELD.height - 60);
+
+      ctx.beginPath();
+      ctx.moveTo(FIELD.width / 2, 30);
+      ctx.lineTo(FIELD.width / 2, FIELD.height - 30);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(FIELD.width / 2, FIELD.height / 2, FIELD.centerCircleRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(FIELD.width / 2, FIELD.height / 2, 4, 0, Math.PI * 2);
+      ctx.fillStyle = FIELD.lineColor;
+      ctx.fill();
+
+      drawGoal(0);
+      drawGoal(FIELD.width - FIELD.goalDepth);
+    }
+
+    function drawGoal(x) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.rect(
+        x,
+        FIELD.height / 2 - FIELD.goalWidth / 2,
+        FIELD.goalDepth,
+        FIELD.goalWidth
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawPlayer(p, radius, color, outline) {
+      ctx.save();
+      const grad = ctx.createRadialGradient(
+        p.x - radius / 3,
+        p.y - radius / 3,
+        radius / 4,
+        p.x,
+        p.y,
+        radius
+      );
+      grad.addColorStop(0, "#ffffff");
+      grad.addColorStop(1, color);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = outline;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y - radius / 2.5, radius / 4, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    function drawBall() {
+      ctx.save();
+      const grad = ctx.createRadialGradient(
+        ball.x - BALL.radius / 3,
+        ball.y - BALL.radius / 3,
+        BALL.radius / 5,
+        ball.x,
+        ball.y,
+        BALL.radius
+      );
+      grad.addColorStop(0, "#fff9c4");
+      grad.addColorStop(1, BALL.color);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, BALL.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = BALL.outline;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function loop(timestamp) {
+      if (!GAME.lastTime) GAME.lastTime = timestamp;
+      const delta = timestamp - GAME.lastTime;
+      GAME.lastTime = timestamp;
+
+      if (GAME.running) {
+        updatePlayer();
+        updateAI();
+        updateBall();
+        updateTimer(delta);
+      }
+
+      drawField();
+      drawPlayer(player, PLAYER.radius, PLAYER.color, PLAYER.outline);
+      drawPlayer(ai, AI.radius, AI.color, AI.outline);
+      drawBall();
+
+      requestAnimationFrame(loop);
+    }
+
+    function restartGame() {
+      GAME.score = 0;
+      GAME.timeLeft = 60;
+      GAME.running = true;
+      scoreEl.textContent = GAME.score;
+      timeEl.textContent = GAME.timeLeft.toFixed(0);
+      messageEl.textContent = "";
+      resetPositions(true);
+
+      if (GAME.score >= 5) {
+        setDifficulty("Hard");
+      } else if (GAME.score >= 2) {
+        setDifficulty("Normal");
+      } else {
+        setDifficulty("Easy");
+      }
+    }
+
+    restartBtn.addEventListener("click", () => {
+      restartGame();
+      flashMessage("Kickoff!", "#fff");
+    });
+
+    restartGame();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
